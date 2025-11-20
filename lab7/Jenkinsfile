@@ -26,9 +26,15 @@ pipeline {
         // СТАДИЯ 2: ЗАПУСК АВТОТЕСТОВ (PyTest из Лаб. 5)
         // =========================================================
         stage('Run API Autotests (PyTest)') {
+            agent {
+                docker {
+                    image 'python:3.10-slim'
+                }
+            }
             steps {
                 echo "Running OpenBMC Redfish API tests using PyTest..."
                 sh "pip install pytest requests"
+                sh "mkdir -p reports"
                 sh "pytest autotests/test_redfish.py --junitxml=reports/api_report.xml"
             }
             post {
@@ -66,9 +72,15 @@ pipeline {
         // СТАДИЯ 4: ЗАПУСК НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ (Locust из Лаб. 6)
         // =========================================================
         stage('Run Load Testing (Locust)') {
+            agent {
+                docker {
+                    image 'python:3.10-slim'
+                }
+            }
             steps {
                 echo "Running OpenBMC Load tests using Locust..."
                 sh "pip install locust"
+                sh "mkdir -p reports"
                 sh "locust -f locustfile.py --headless -u 10 -r 2 --run-time 60s --csv=reports/locust_stats --html=reports/locust_report.html"
             }
             post {
