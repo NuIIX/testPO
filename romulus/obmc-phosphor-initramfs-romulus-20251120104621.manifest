@@ -1,0 +1,6 @@
+busybox arm1176jzs 1.37.0-r0
+busybox-udhcpc arm1176jzs 1.37.0-r0
+cf-fsi-firmware all 1.0+git0+bae32e353a-r1
+libc6 arm1176jzs 2.41+git0+5b4c461701-r0
+obmc-phosphor-initfs all 1.0-r1
+util-linux-fcntl-lock arm1176jzs 2.41-r0
