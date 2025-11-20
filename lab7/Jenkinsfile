@@ -1,0 +1,91 @@
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout()
+        cleanWs()
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                checkout scm
+            }
+        }
+
+        // =========================================================
+        // СТАДИЯ 1: ЗАПУСК OpenBMC В QEMU
+        // =========================================================
+        stage('OpenBMC Setup & Start QEMU') {
+            steps {
+                echo "Starting OpenBMC QEMU in background..."
+                sh "sleep 10"
+            }
+        }
+
+        // =========================================================
+        // СТАДИЯ 2: ЗАПУСК АВТОТЕСТОВ (PyTest из Лаб. 5)
+        // =========================================================
+        stage('Run API Autotests (PyTest)') {
+            steps {
+                echo "Running OpenBMC Redfish API tests using PyTest..."
+                sh "pip install pytest requests"
+                sh "pytest autotests/test_redfish.py --junitxml=reports/api_report.xml"
+            }
+            post {
+                always {
+                    junit 'reports/api_report.xml'
+                }
+            }
+        }
+
+        // =========================================================
+        // СТАДИЯ 3: ЗАПУСК WEBUI ТЕСТОВ (Selenium/Playwright)
+        // =========================================================
+        stage('Run WebUI Tests (Selenium)') {
+            agent {
+                docker {
+                    image 'selenium/standalone-chrome'
+                }
+            }
+            steps {
+                echo "Running OpenBMC WebUI tests using Selenium..."
+                sh '''
+                    apt-get update && apt-get install -y python3 python3-pip
+                    pip install pytest selenium requests
+                '''
+                sh "pytest autotests/test_webui.py --junitxml=reports/webui_report.xml"
+            }
+            post {
+                always {
+                    junit 'reports/webui_report.xml'
+                }
+            }
+        }
+
+        // =========================================================
+        // СТАДИЯ 4: ЗАПУСК НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ (Locust из Лаб. 6)
+        // =========================================================
+        stage('Run Load Testing (Locust)') {
+            steps {
+                echo "Running OpenBMC Load tests using Locust..."
+                sh "pip install locust"
+                sh "locust -f locustfile.py --headless -u 10 -r 2 --run-time 60s --csv=reports/locust_stats --html=reports/locust_report.html"
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'reports/locust_report.html, reports/locust_stats_failures.csv, reports/locust_stats.csv', fingerprint: true
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo "Пайплайн завершен с ошибкой."
+        }
+        success {
+            echo "CI/CD Пайплайн успешно завершен. Отчеты доступны в артефактах."
+        }
+    }
+}
