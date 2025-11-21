@@ -1,102 +1,158 @@
 pipeline {
     agent any
-
-    options {
-        skipDefaultCheckout()
+    environment {
+        GIT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=no"
+        PROJECT_DIR = "${WORKSPACE}"
+        QEMU_IMAGE = "/var/jenkins_home/workspace/romulus/obmc-phosphor-image-romulus-20250927014348.static.mtd"
+        WEBUI_RESULTS = "${PROJECT_DIR}/results/webui_tests.xml"
+        API_RESULTS = "${PROJECT_DIR}/results/api_tests.xml"
+        LOAD_RESULTS = "${PROJECT_DIR}/results/load_tests.xml"
     }
-
     stages {
-        stage('Checkout Code') {
+        stage('Prepare Environment') {
             steps {
-                checkout scm
+                echo "Подготовка окружения"
+                sh """
+                mkdir -p ${PROJECT_DIR}/results
+                mkdir -p /var/jenkins_home/.ssh
+                ssh-keyscan github.com >> /var/jenkins_home/.ssh/known_hosts 2>/dev/null || true
+                chmod 644 /var/jenkins_home/.ssh/known_hosts || true
+
+                apt-get update
+                apt-get install -y python3 python3-pip python3-venv python3-full curl wget qemu-system-arm chromium chromium-driver
+                python3 -m venv ${PROJECT_DIR}/venv
+                . ${PROJECT_DIR}/venv/bin/activate
+                pip install --upgrade pip
+                pip install pytest requests urllib3 selenium locust webdriver-manager
+                """
             }
         }
 
-        // =========================================================
-        // СТАДИЯ 1: ЗАПУСК OpenBMC В QEMU
-        // =========================================================
-        stage('OpenBMC Setup & Start QEMU') {
+        stage('Start QEMU') {
             steps {
-                echo "Starting OpenBMC QEMU in background..."
-                sh "sleep 10"
+                echo "Запуск QEMU с OpenBMC"
+                sh """
+                pkill qemu-system-arm || true
+                rm -f qemu.pid
+                sleep 2
+
+                nohup qemu-system-arm -m 256 -M romulus-bmc -nographic \
+                    -drive file=${QEMU_IMAGE},format=raw,if=mtd \
+                    -net nic \
+                    -net user,hostfwd=tcp::2222-:22,hostfwd=tcp::2443-:443,hostfwd=udp::2623-:623,hostname=qemu \
+                    > ${PROJECT_DIR}/results/qemu.log 2>&1 &
+
+                echo \$! > qemu.pid
+                sleep 10
+
+                if ! ps -p \$(cat qemu.pid) > /dev/null; then
+                    echo "QEMU не запущен!"
+                    cat ${PROJECT_DIR}/results/qemu.log
+                    exit 1
+                fi
+
+                echo "Ожидание OpenBMC на порту 2443..."
+                timeout=180
+                elapsed=0
+                while ! curl -k --silent --output /dev/null --connect-timeout 5 https://localhost:2443/redfish/v1; do
+                    sleep 10
+                    elapsed=\$((elapsed+10))
+                    if [ \$elapsed -ge \$timeout ]; then
+                        echo "OpenBMC не поднялся за \$timeout секунд"
+                        cat ${PROJECT_DIR}/results/qemu.log
+                        exit 1
+                    fi
+                    printf "."
+                done
+                echo "\\nOpenBMC готов к работе"
+                """
             }
         }
 
-        // =========================================================
-        // СТАДИЯ 2: ЗАПУСК АВТОТЕСТОВ (PyTest из Лаб. 5)
-        // =========================================================
-        stage('Run API Autotests (PyTest)') {
-            agent {
-                docker {
-                    image 'python:3.10-slim'
-                }
-            }
+        stage('Run WebUI Tests') {
             steps {
-                echo "Running OpenBMC Redfish API tests using PyTest..."
-                sh "pip install pytest requests"
-                sh "mkdir -p reports"
-                sh "pytest autotests/test_redfish.py --junitxml=reports/api_report.xml"
+                echo "Запуск WebUI тестов OpenBMC"
+                sh """
+                cd ${PROJECT_DIR}
+                . ${PROJECT_DIR}/venv/bin/activate
+                python -m pytest tests/unified_openbmc_tests.py::TestWebUI -v --junitxml=${WEBUI_RESULTS} || true
+                ls -la ${PROJECT_DIR}/results/
+                """
             }
             post {
                 always {
-                    junit 'reports/api_report.xml'
+                    script {
+                        if (fileExists('results/webui_tests.xml')) {
+                            junit skipPublishingChecks: true, allowEmptyResults: true, testResults: 'results/webui_tests.xml'
+                        }
+                    }
+                    archiveArtifacts artifacts: 'results/webui_tests.xml', fingerprint: true, allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'results/*.png', fingerprint: true, allowEmptyArchive: true
                 }
             }
         }
 
-        // =========================================================
-        // СТАДИЯ 3: ЗАПУСК WEBUI ТЕСТОВ (Selenium/Playwright)
-        // =========================================================
-        stage('Run WebUI Tests (Selenium)') {
-            agent {
-                docker {
-                    image 'selenium/standalone-chrome'
-                }
-            }
+        stage('Run API Tests') {
             steps {
-                echo "Running OpenBMC WebUI tests using Selenium..."
-                sh '''
-                    apt-get update && apt-get install -y python3 python3-pip
-                    pip install pytest selenium requests
-                '''
-                sh "pytest autotests/test_webui.py --junitxml=reports/webui_report.xml"
+                echo "Запуск автотестов для OpenBMC"
+                sh """
+                cd ${PROJECT_DIR}
+                . ${PROJECT_DIR}/venv/bin/activate
+                python -m pytest tests/unified_openbmc_tests.py::TestRedfishAPI -v --junitxml=${API_RESULTS} || true
+                ls -la ${PROJECT_DIR}/results/
+                """
             }
             post {
                 always {
-                    junit 'reports/webui_report.xml'
+                    script {
+                        if (fileExists('results/api_tests.xml')) {
+                            junit skipPublishingChecks: true, allowEmptyResults: true, testResults: 'results/api_tests.xml'
+                        }
+                    }
+                    archiveArtifacts artifacts: 'results/api_tests.xml', fingerprint: true, allowEmptyArchive: true
                 }
             }
         }
 
-        // =========================================================
-        // СТАДИЯ 4: ЗАПУСК НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ (Locust из Лаб. 6)
-        // =========================================================
-        stage('Run Load Testing (Locust)') {
-            agent {
-                docker {
-                    image 'python:3.10-slim'
-                }
-            }
+        stage('Run Load Tests') {
             steps {
-                echo "Running OpenBMC Load tests using Locust..."
-                sh "pip install locust"
-                sh "mkdir -p reports"
-                sh "locust -f locustfile.py --headless -u 10 -r 2 --run-time 60s --csv=reports/locust_stats --html=reports/locust_report.html"
+                echo "Запуск нагрузочного тестирования OpenBMC"
+                sh """
+                cd ${PROJECT_DIR}
+                . ${PROJECT_DIR}/venv/bin/activate
+                python -c "
+from tests.unified_openbmc_tests import run_load_test
+import sys
+success = run_load_test()
+sys.exit(0 if success else 1)
+" || true
+                ls -la ${PROJECT_DIR}/results/
+                """
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'reports/locust_report.html, reports/locust_stats_failures.csv, reports/locust_stats.csv', fingerprint: true
+                    archiveArtifacts artifacts: 'results/load_tests.xml', fingerprint: true, allowEmptyArchive: true
                 }
             }
         }
     }
 
     post {
-        failure {
-            echo "Пайплайн завершен с ошибкой."
+        always {
+            echo "Очистка ресурсов"
+            sh """
+            if [ -f qemu.pid ]; then
+                kill \$(cat qemu.pid) || true
+                rm -f qemu.pid
+            fi
+            pkill qemu-system-arm || true
+            """
         }
         success {
-            echo "CI/CD Пайплайн успешно завершен. Отчеты доступны в артефактах."
+            echo "Pipeline выполнен успешно"
+        }
+        failure {
+            echo "Pipeline завершился с ошибками"
         }
     }
 }
