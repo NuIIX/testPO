@@ -75,7 +75,7 @@ pipeline {
                 sh """
                 cd ${PROJECT_DIR}
                 . ${PROJECT_DIR}/venv/bin/activate
-                python -m pytest tests/unified_openbmc_tests.py::TestWebUI -v --junitxml=${WEBUI_RESULTS} || true
+                python -m pytest -k "TestWebUI" -v --junitxml=/var/jenkins_home/workspace/OpenBMC-CI-Pipeline/results/webui_tests.xml
                 ls -la ${PROJECT_DIR}/results/
                 """
             }
