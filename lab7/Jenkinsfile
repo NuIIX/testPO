@@ -75,7 +75,7 @@ pipeline {
                 sh """
                 cd ${PROJECT_DIR}
                 . ${PROJECT_DIR}/venv/bin/activate
-                python -m pytest tests/unified_openbmc_tests.py::TestWebUI -v --junitxml=${WEBUI_RESULTS} || true
+                python -m pytest lab7/tests/unified_openbmc_tests.py::TestWebUI -v --junitxml=${WEBUI_RESULTS} || true
                 ls -la ${PROJECT_DIR}/results/
                 """
             }
@@ -98,7 +98,7 @@ pipeline {
                 sh """
                 cd ${PROJECT_DIR}
                 . ${PROJECT_DIR}/venv/bin/activate
-                python -m pytest tests/unified_openbmc_tests.py::TestRedfishAPI -v --junitxml=${API_RESULTS} || true
+                python -m pytest lab7/tests/unified_openbmc_tests.py::TestRedfishAPI -v --junitxml=${API_RESULTS} || true
                 ls -la ${PROJECT_DIR}/results/
                 """
             }
