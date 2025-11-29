@@ -116,16 +116,23 @@ pipeline {
 
         stage('Run Load Tests') {
             steps {
-                echo "Запуск нагрузочного тестирования OpenBMC"
+                echo "Запуск нагрузочного тестирования OpenBMC и генерация HTML-отчета"
                 sh """
                 cd ${PROJECT_DIR}
                 . ${PROJECT_DIR}/venv/bin/activate
-                PYTHONPATH=. python -c "
-from lab7.tests.unified_openbmc_tests import run_load_test
-import sys
-success = run_load_test()
-sys.exit(0 if success else 1)
-" || true
+
+                locust --headless \\
+                       -f lab7/tests/locustfile.py \\
+                       --host=https://localhost:2443 \\
+                       --users 20 \\
+                       --spawn-rate 3 \\
+                       --run-time 2m \\
+                       --html ${PROJECT_DIR}/results/load_report.html \\
+                       --json \\
+                       --skip-log \\
+                       --exit-code-on-error \\
+                       || true
+
                 ls -la ${PROJECT_DIR}/results/
                 """
             }
