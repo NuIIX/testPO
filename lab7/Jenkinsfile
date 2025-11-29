@@ -139,6 +139,8 @@ pipeline {
             post {
                 always {
                     archiveArtifacts artifacts: 'results/load_tests.xml', fingerprint: true, allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'results/load_report.html', fingerprint: true, allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'results/*.json', fingerprint: true, allowEmptyArchive: true
                 }
             }
         }
